@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
+from .observability import get_langfuse, trace_attributes
 from .providers import get_provider
 from .schemas import GenerateRequest, GenerateResponse, Template
 from .templates_data import TEMPLATE_INDEX, TEMPLATES
@@ -58,6 +59,32 @@ def generate(req: GenerateRequest) -> GenerateResponse:
     started = time.perf_counter()
     output = provider.generate(filled_prompt)
     latency_ms = round((time.perf_counter() - started) * 1000)
+
+    # Langfuse へトレース送信（未設定なら何もしない）。
+    # 構造: ルートspan「generate」の下に generation「llm-call」をぶら下げる。
+    # template_id をタグに入れることで「どのプリセットの品質が悪いか」を後から絞り込める。
+    langfuse = get_langfuse()
+    if langfuse is not None:
+        with langfuse.start_as_current_observation(
+            as_type="span",
+            name="generate",
+            input={"template_id": template.id, "variables": req.variables},
+        ) as root_span:
+            # tags にテンプレートIDを入れると「どのプリセットの品質が悪いか」を後から絞り込める
+            with trace_attributes(
+                tags=[f"template:{template.id}", f"provider:{provider.name}"],
+                metadata={"latency_ms": latency_ms},
+            ):
+                with langfuse.start_as_current_observation(
+                    as_type="generation",
+                    name="llm-call",
+                    model=getattr(provider, "model", provider.name),
+                    input=filled_prompt,
+                ) as generation:
+                    generation.update(output=output)
+
+            root_span.update(output=output)
+        langfuse.flush()
 
     with LOG_PATH.open("a", encoding="utf-8") as f:
         f.write(json.dumps({

@@ -1,8 +1,20 @@
-"""API のテスト。FastAPI の TestClient はサーバーを立てずにアプリを直接叩ける。"""
+"""API のテスト。FastAPI の TestClient はサーバーを立てずにアプリを直接叩ける。
 
-from fastapi.testclient import TestClient
+テストは外部 API（OpenRouter）や観測基盤（Langfuse）に依存させない。
+.env に本番設定が入っていてもテストは決定的に動くよう、環境変数を上書きしてから
+アプリを import する（main.py の load_dotenv より先に環境変数を確定させる必要がある）。
+"""
 
-from app.main import app
+import os
+
+# load_dotenv は既存の環境変数を上書きしないため、ここで先に空値を入れて .env を無効化する
+os.environ["LLM_PROVIDER"] = "mock"
+os.environ["LANGFUSE_PUBLIC_KEY"] = ""
+os.environ["LANGFUSE_SECRET_KEY"] = ""
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app.main import app  # noqa: E402
 
 client = TestClient(app)
 
